@@ -1,6 +1,7 @@
 --// FTAP MOD MENU
---// ESP + AIM
---// AIM KEY: Q
+--// ESP + LOCK
+--// LOCK KEY: Q
+--// Red ESP / Select All / Clear All / Selected Player Lock
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -9,22 +10,13 @@ local CoreGui = game:GetService("CoreGui")
 
 local LocalPlayer = Players.LocalPlayer
 
---==================================================
--- CLEAN OLD VERSION
---==================================================
-
 pcall(function()
     local old = CoreGui:FindFirstChild("FTAP_ModMenu")
-    if old then
-        old:Destroy()
-    end
+    if old then old:Destroy() end
 end)
-
 pcall(function()
     local old = LocalPlayer.PlayerGui:FindFirstChild("FTAP_ModMenu")
-    if old then
-        old:Destroy()
-    end
+    if old then old:Destroy() end
 end)
 
 --==================================================
@@ -34,1749 +26,707 @@ end)
 local ESP_ENABLED = false
 local BOTS_ENABLED = false
 
-local AIM_ENABLED = false
-
-local AIM_FOV = 150
-local AIM_MAX_DISTANCE = 500
-local AIM_SMOOTHNESS = 8
-
-local AIM_TARGET_PART = "Head"
-
-local AIM_VISIBLE_CHECK = true
-local AIM_TEAM_CHECK = false
-local AIM_SELECTED_ONLY = false
-
-local AIM_HOLD_MODE = true
-
--- AIM = Q
-local AIM_KEY = Enum.KeyCode.Q
-
-local aimHolding = false
-local aimToggled = false
-
-local waitingForKey = false
+local LOCK_ENABLED = false
+local LOCK_FOV = 150
+local LOCK_MAX_DISTANCE = 500
+local LOCK_STRENGTH = 8
+local LOCK_TARGET_PART = "Head"
+local LOCK_VISIBLE_CHECK = true
+local LOCK_TEAM_CHECK = false
+local LOCK_KEY = Enum.KeyCode.Q
 
 local selectedPlayers = {}
 local activeESP = {}
+local lockedPlayer = nil
+local lockActive = false
+local waitingForKey = false
+local running = true
 
-for _, player in ipairs(Players:GetPlayers()) do
-    if player ~= LocalPlayer then
-        selectedPlayers[player.UserId] = false
-    end
+local RED = Color3.fromRGB(255, 55, 55)
+local RED_DARK = Color3.fromRGB(120, 30, 35)
+local RED_SOFT = Color3.fromRGB(55, 28, 32)
+local WHITE = Color3.fromRGB(242, 242, 246)
+local MUTED = Color3.fromRGB(160, 160, 172)
+local PANEL = Color3.fromRGB(17, 18, 23)
+local PANEL2 = Color3.fromRGB(23, 24, 31)
+local PANEL3 = Color3.fromRGB(30, 31, 40)
+local BORDER = Color3.fromRGB(52, 53, 65)
+
+for _, p in ipairs(Players:GetPlayers()) do
+    if p ~= LocalPlayer then selectedPlayers[p.UserId] = false end
 end
-
---==================================================
--- COLORS
---==================================================
-
-local PLAYER_COLOR = Color3.fromRGB(0, 255, 120)
-local BOT_COLOR = Color3.fromRGB(255, 170, 0)
-local AIM_COLOR = Color3.fromRGB(0, 200, 255)
 
 --==================================================
 -- HELPERS
 --==================================================
 
-local function getCharacter(player)
+local function characterOf(player)
     return player and player.Character
 end
 
-local function getHumanoid(character)
-    if not character then
-        return nil
-    end
-
-    return character:FindFirstChildOfClass("Humanoid")
+local function humanoidOf(character)
+    return character and character:FindFirstChildOfClass("Humanoid")
 end
 
-local function isAlive(character)
-    local humanoid = getHumanoid(character)
-
-    return humanoid
-        and humanoid.Health > 0
+local function alive(character)
+    local h = humanoidOf(character)
+    return h and h.Health > 0
 end
 
-local function getRoot(character)
-    if not character then
-        return nil
-    end
-
+local function rootOf(character)
+    if not character then return nil end
     return character:FindFirstChild("HumanoidRootPart")
         or character:FindFirstChild("UpperTorso")
         or character:FindFirstChild("Torso")
 end
 
-local function getTargetPart(character)
-    if not character then
-        return nil
+local function targetPartOf(character)
+    if not character then return nil end
+    if LOCK_TARGET_PART == "Head" then
+        return character:FindFirstChild("Head") or rootOf(character)
     end
-
-    if AIM_TARGET_PART == "Head" then
-        return character:FindFirstChild("Head")
-            or character:FindFirstChild("HumanoidRootPart")
-    end
-
-    return character:FindFirstChild("HumanoidRootPart")
-        or character:FindFirstChild("UpperTorso")
-        or character:FindFirstChild("Torso")
+    return rootOf(character)
 end
 
---==================================================
--- REMOVE ESP
---==================================================
-
-local function removeESP(character)
-    if not character then
-        return
-    end
-
+local function destroyOldESP(character)
+    if not character then return end
     local data = activeESP[character]
-
     if data then
-        if data.highlight then
-            pcall(function()
-                data.highlight:Destroy()
-            end)
-        end
-
-        if data.billboard then
-            pcall(function()
-                data.billboard:Destroy()
-            end)
-        end
-
+        pcall(function() data.highlight:Destroy() end)
+        pcall(function() data.billboard:Destroy() end)
         activeESP[character] = nil
     end
-
-    local oldHighlight = character:FindFirstChild("FTAP_ESP_Highlight")
-
-    if oldHighlight then
-        oldHighlight:Destroy()
-    end
-
-    local oldName = character:FindFirstChild("FTAP_ESP_Name")
-
-    if oldName then
-        oldName:Destroy()
-    end
+    local h = character:FindFirstChild("FTAP_ESP_Highlight")
+    if h then h:Destroy() end
+    local b = character:FindFirstChild("FTAP_ESP_Name")
+    if b then b:Destroy() end
 end
 
---==================================================
--- CREATE ESP
---==================================================
+local function createESP(character, name, kind)
+    if not character then return end
+    destroyOldESP(character)
 
-local function createESP(character, displayName, kind)
-    if not character then
-        return
-    end
-
-    removeESP(character)
-
-    local color = PLAYER_COLOR
-
-    if kind == "BOT" then
-        color = BOT_COLOR
-    end
+    local color = RED
+    if kind == "BOT" then color = Color3.fromRGB(255, 95, 65) end
 
     local highlight = Instance.new("Highlight")
-
     highlight.Name = "FTAP_ESP_Highlight"
     highlight.Adornee = character
     highlight.FillColor = color
     highlight.OutlineColor = color
-    highlight.FillTransparency = 0.65
+    highlight.FillTransparency = 0.58
     highlight.OutlineTransparency = 0
     highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
     highlight.Parent = character
 
-    local billboard = Instance.new("BillboardGui")
+    local bill = Instance.new("BillboardGui")
+    bill.Name = "FTAP_ESP_Name"
+    bill.Adornee = rootOf(character)
+    bill.Size = UDim2.fromOffset(260, 50)
+    bill.StudsOffset = Vector3.new(0, 3.1, 0)
+    bill.AlwaysOnTop = true
+    bill.MaxDistance = 10000
+    bill.Parent = character
 
-    billboard.Name = "FTAP_ESP_Name"
-    billboard.Adornee = getRoot(character)
-    billboard.Size = UDim2.new(0, 220, 0, 70)
-    billboard.StudsOffset = Vector3.new(0, 3.2, 0)
-    billboard.AlwaysOnTop = true
-    billboard.MaxDistance = 10000
-    billboard.Parent = character
-
-    local text = Instance.new("TextLabel")
-
-    text.BackgroundTransparency = 1
-    text.Size = UDim2.new(1, 0, 1, 0)
-    text.Text = displayName
-    text.TextColor3 = color
-    text.TextStrokeTransparency = 0
-    text.TextSize = 14
-    text.Font = Enum.Font.GothamBold
-    text.Parent = billboard
+    local label = Instance.new("TextLabel")
+    label.BackgroundTransparency = 1
+    label.Size = UDim2.fromScale(1, 1)
+    label.Text = name
+    label.TextColor3 = color
+    label.TextStrokeTransparency = 0
+    label.TextSize = 14
+    label.Font = Enum.Font.GothamBold
+    label.Parent = bill
 
     activeESP[character] = {
-        displayName = displayName,
-        kind = kind,
         highlight = highlight,
-        billboard = billboard,
-        text = text
+        billboard = bill,
+        text = label,
+        kind = kind
     }
 end
 
---==================================================
--- PLAYER ESP
---==================================================
-
 local function updatePlayerESP(player)
-    if not player or player == LocalPlayer then
-        return
-    end
-
+    if not player or player == LocalPlayer then return end
     local character = player.Character
-
-    if not character then
-        return
+    if not character then return end
+    destroyOldESP(character)
+    if ESP_ENABLED and selectedPlayers[player.UserId] then
+        createESP(character, player.DisplayName .. "  [" .. player.Name .. "]", "PLAYER")
     end
-
-    removeESP(character)
-
-    if not ESP_ENABLED then
-        return
-    end
-
-    if not selectedPlayers[player.UserId] then
-        return
-    end
-
-    createESP(
-        character,
-        player.DisplayName .. "  [" .. player.Name .. "]",
-        "PLAYER"
-    )
 end
 
---==================================================
--- BOT DETECTION
---==================================================
-
 local function isPlayerCharacter(character)
-    for _, player in ipairs(Players:GetPlayers()) do
-        if player.Character == character then
-            return true
-        end
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p.Character == character then return true end
     end
-
     return false
 end
 
 local function scanBots()
-    if not ESP_ENABLED or not BOTS_ENABLED then
-        return
-    end
-
+    if not ESP_ENABLED or not BOTS_ENABLED then return end
     for _, obj in ipairs(workspace:GetDescendants()) do
-        if obj:IsA("Model") then
-
-            local humanoid = obj:FindFirstChildOfClass("Humanoid")
-
-            if humanoid
-                and humanoid.Health > 0
-                and not isPlayerCharacter(obj)
-                and getRoot(obj)
-            then
-
-                if not activeESP[obj] then
-
-                    local nameValue =
-                        obj:GetAttribute("DisplayName")
-
-                    local botName =
-                        nameValue
-                        or obj.Name
-                        or "BOT"
-
-                    createESP(
-                        obj,
-                        tostring(botName) .. "  [BOT]",
-                        "BOT"
-                    )
-                end
+        if obj:IsA("Model") and not isPlayerCharacter(obj) then
+            local h = humanoidOf(obj)
+            if h and h.Health > 0 and rootOf(obj) and not activeESP[obj] then
+                local n = obj:GetAttribute("DisplayName") or obj.Name or "BOT"
+                createESP(obj, tostring(n) .. "  [BOT]", "BOT")
             end
         end
     end
 end
 
---==================================================
--- REMOVE ALL ESP
---==================================================
-
 local function removeAllESP()
-
     for character in pairs(activeESP) do
-        removeESP(character)
+        destroyOldESP(character)
     end
-
     for _, obj in ipairs(workspace:GetDescendants()) do
-
-        if obj:IsA("Highlight")
-            and obj.Name == "FTAP_ESP_Highlight"
-        then
-            obj:Destroy()
-
-        elseif obj:IsA("BillboardGui")
-            and obj.Name == "FTAP_ESP_Name"
-        then
+        if (obj:IsA("Highlight") and obj.Name == "FTAP_ESP_Highlight")
+            or (obj:IsA("BillboardGui") and obj.Name == "FTAP_ESP_Name") then
             obj:Destroy()
         end
     end
 end
 
 --==================================================
--- GUI
+-- GUI HELPERS
 --==================================================
 
 local ScreenGui = Instance.new("ScreenGui")
-
 ScreenGui.Name = "FTAP_ModMenu"
 ScreenGui.ResetOnSpawn = false
 ScreenGui.IgnoreGuiInset = true
 ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Global
 ScreenGui.DisplayOrder = 2147483647
-
-pcall(function()
-    ScreenGui.Parent = CoreGui
-end)
-
-if not ScreenGui.Parent then
-    ScreenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
-end
-
---==================================================
--- MAIN WINDOW
---==================================================
+pcall(function() ScreenGui.Parent = CoreGui end)
+if not ScreenGui.Parent then ScreenGui.Parent = LocalPlayer:WaitForChild("PlayerGui") end
 
 local Main = Instance.new("Frame")
-
-Main.Name = "Main"
-Main.Size = UDim2.new(0, 620, 0, 440)
-Main.Position = UDim2.new(0.5, -310, 0.5, -220)
-Main.BackgroundColor3 = Color3.fromRGB(18, 18, 23)
+Main.Size = UDim2.fromOffset(760, 500)
+Main.Position = UDim2.new(.5, -380, .5, -250)
+Main.BackgroundColor3 = PANEL
 Main.BorderSizePixel = 0
-Main.ZIndex = 10
 Main.Parent = ScreenGui
 
-local MainCorner = Instance.new("UICorner")
-MainCorner.CornerRadius = UDim.new(0, 10)
-MainCorner.Parent = Main
+local mainCorner = Instance.new("UICorner")
+mainCorner.CornerRadius = UDim.new(0, 14)
+mainCorner.Parent = Main
 
-local MainStroke = Instance.new("UIStroke")
-MainStroke.Color = Color3.fromRGB(55, 55, 70)
-MainStroke.Thickness = 1
-MainStroke.Parent = Main
+local mainStroke = Instance.new("UIStroke")
+mainStroke.Color = BORDER
+mainStroke.Thickness = 1
+mainStroke.Parent = Main
 
---==================================================
--- TOP BAR
---==================================================
+local Top = Instance.new("Frame")
+Top.Size = UDim2.new(1, 0, 0, 58)
+Top.BackgroundColor3 = PANEL2
+Top.BorderSizePixel = 0
+Top.Parent = Main
 
-local TopBar = Instance.new("Frame")
+local title = Instance.new("TextLabel")
+title.BackgroundTransparency = 1
+title.Position = UDim2.fromOffset(20, 5)
+title.Size = UDim2.fromOffset(500, 28)
+title.Text = "FTAP  /  CONTROL CENTER"
+title.TextColor3 = WHITE
+title.TextSize = 18
+title.Font = Enum.Font.GothamBold
+title.TextXAlignment = Enum.TextXAlignment.Left
+title.Parent = Top
 
-TopBar.Size = UDim2.new(1, 0, 0, 48)
-TopBar.BackgroundColor3 = Color3.fromRGB(24, 24, 31)
-TopBar.BorderSizePixel = 0
-TopBar.ZIndex = 11
-TopBar.Parent = Main
+local subtitle = Instance.new("TextLabel")
+subtitle.BackgroundTransparency = 1
+subtitle.Position = UDim2.fromOffset(21, 31)
+subtitle.Size = UDim2.fromOffset(500, 20)
+subtitle.Text = "ESP + PLAYER LOCK"
+subtitle.TextColor3 = MUTED
+subtitle.TextSize = 10
+subtitle.Font = Enum.Font.GothamMedium
+subtitle.TextXAlignment = Enum.TextXAlignment.Left
+subtitle.Parent = Top
 
-local Title = Instance.new("TextLabel")
-
-Title.BackgroundTransparency = 1
-Title.Position = UDim2.new(0, 18, 0, 0)
-Title.Size = UDim2.new(1, -120, 1, 0)
-Title.Text = "FTAP  •  MOD MENU"
-Title.TextColor3 = Color3.fromRGB(240, 240, 245)
-Title.TextSize = 16
-Title.Font = Enum.Font.GothamBold
-Title.TextXAlignment = Enum.TextXAlignment.Left
-Title.ZIndex = 12
-Title.Parent = TopBar
-
---==================================================
--- MINIMIZE
---==================================================
-
-local Minimize = Instance.new("TextButton")
-
-Minimize.Size = UDim2.new(0, 38, 0, 30)
-Minimize.Position = UDim2.new(1, -85, 0, 9)
-Minimize.BackgroundColor3 = Color3.fromRGB(45, 45, 55)
-Minimize.Text = "—"
-Minimize.TextColor3 = Color3.fromRGB(230, 230, 235)
-Minimize.TextSize = 18
-Minimize.Font = Enum.Font.GothamBold
-Minimize.BorderSizePixel = 0
-Minimize.ZIndex = 13
-Minimize.Parent = TopBar
-
-local MinCorner = Instance.new("UICorner")
-MinCorner.CornerRadius = UDim.new(0, 6)
-MinCorner.Parent = Minimize
-
---==================================================
--- CLOSE
---==================================================
-
-local Close = Instance.new("TextButton")
-
-Close.Size = UDim2.new(0, 38, 0, 30)
-Close.Position = UDim2.new(1, -43, 0, 9)
-Close.BackgroundColor3 = Color3.fromRGB(130, 45, 50)
-Close.Text = "×"
-Close.TextColor3 = Color3.fromRGB(255, 255, 255)
-Close.TextSize = 20
-Close.Font = Enum.Font.GothamBold
-Close.BorderSizePixel = 0
-Close.ZIndex = 13
-Close.Parent = TopBar
-
-local CloseCorner = Instance.new("UICorner")
-CloseCorner.CornerRadius = UDim.new(0, 6)
-CloseCorner.Parent = Close
-
---==================================================
--- SIDEBAR
---==================================================
-
-local Sidebar = Instance.new("Frame")
-
-Sidebar.Position = UDim2.new(0, 0, 0, 48)
-Sidebar.Size = UDim2.new(0, 120, 1, -48)
-Sidebar.BackgroundColor3 = Color3.fromRGB(21, 21, 27)
-Sidebar.BorderSizePixel = 0
-Sidebar.ZIndex = 11
-Sidebar.Parent = Main
-
-local ESPTab = Instance.new("TextButton")
-
-ESPTab.Position = UDim2.new(0, 8, 0, 15)
-ESPTab.Size = UDim2.new(1, -16, 0, 42)
-ESPTab.BackgroundColor3 = Color3.fromRGB(40, 40, 52)
-ESPTab.Text = "ESP"
-ESPTab.TextColor3 = Color3.fromRGB(240, 240, 245)
-ESPTab.TextSize = 14
-ESPTab.Font = Enum.Font.GothamBold
-ESPTab.BorderSizePixel = 0
-ESPTab.ZIndex = 12
-ESPTab.Parent = Sidebar
-
-local ESPCorner = Instance.new("UICorner")
-ESPCorner.CornerRadius = UDim.new(0, 7)
-ESPCorner.Parent = ESPTab
-
-local AIMTab = Instance.new("TextButton")
-
-AIMTab.Position = UDim2.new(0, 8, 0, 65)
-AIMTab.Size = UDim2.new(1, -16, 0, 42)
-AIMTab.BackgroundColor3 = Color3.fromRGB(29, 29, 36)
-AIMTab.Text = "AIM"
-AIMTab.TextColor3 = Color3.fromRGB(180, 180, 190)
-AIMTab.TextSize = 14
-AIMTab.Font = Enum.Font.GothamBold
-AIMTab.BorderSizePixel = 0
-AIMTab.ZIndex = 12
-AIMTab.Parent = Sidebar
-
-local AIMCorner = Instance.new("UICorner")
-AIMCorner.CornerRadius = UDim.new(0, 7)
-AIMCorner.Parent = AIMTab
-
---==================================================
--- CONTENT
---==================================================
-
-local ESPContent = Instance.new("Frame")
-
-ESPContent.Position = UDim2.new(0, 120, 0, 48)
-ESPContent.Size = UDim2.new(1, -120, 1, -48)
-ESPContent.BackgroundTransparency = 1
-ESPContent.ZIndex = 11
-ESPContent.Parent = Main
-
-local AIMContent = Instance.new("ScrollingFrame")
-
-AIMContent.Position = UDim2.new(0, 120, 0, 48)
-AIMContent.Size = UDim2.new(1, -120, 1, -48)
-AIMContent.BackgroundTransparency = 1
-AIMContent.BorderSizePixel = 0
-AIMContent.ScrollBarThickness = 4
-AIMContent.ScrollBarImageColor3 = Color3.fromRGB(70, 70, 85)
-AIMContent.CanvasSize = UDim2.new(0, 0, 0, 570)
-AIMContent.Visible = false
-AIMContent.ZIndex = 11
-AIMContent.Parent = Main
-
---==================================================
--- ESP TITLE
---==================================================
-
-local ESPTitle = Instance.new("TextLabel")
-
-ESPTitle.BackgroundTransparency = 1
-ESPTitle.Position = UDim2.new(0, 18, 0, 15)
-ESPTitle.Size = UDim2.new(1, -36, 0, 28)
-ESPTitle.Text = "ESP SETTINGS"
-ESPTitle.TextColor3 = Color3.fromRGB(240, 240, 245)
-ESPTitle.TextSize = 15
-ESPTitle.Font = Enum.Font.GothamBold
-ESPTitle.TextXAlignment = Enum.TextXAlignment.Left
-ESPTitle.ZIndex = 12
-ESPTitle.Parent = ESPContent
-
---==================================================
--- ESP TOGGLE
---==================================================
-
-local ESPToggle = Instance.new("TextButton")
-
-ESPToggle.Position = UDim2.new(0, 18, 0, 50)
-ESPToggle.Size = UDim2.new(1, -36, 0, 40)
-ESPToggle.BackgroundColor3 = Color3.fromRGB(29, 29, 37)
-ESPToggle.TextColor3 = Color3.fromRGB(235, 235, 240)
-ESPToggle.TextSize = 13
-ESPToggle.Font = Enum.Font.GothamMedium
-ESPToggle.TextXAlignment = Enum.TextXAlignment.Left
-ESPToggle.BorderSizePixel = 0
-ESPToggle.ZIndex = 12
-ESPToggle.Parent = ESPContent
-
-local ESPToggleCorner = Instance.new("UICorner")
-ESPToggleCorner.CornerRadius = UDim.new(0, 7)
-ESPToggleCorner.Parent = ESPToggle
-
-local function refreshESPToggle()
-
-    ESPToggle.Text =
-        "   ESP     ["
-        .. (ESP_ENABLED and "ON" or "OFF")
-        .. "]"
-
-    if ESP_ENABLED then
-        ESPToggle.BackgroundColor3 =
-            Color3.fromRGB(30, 65, 50)
-    else
-        ESPToggle.BackgroundColor3 =
-            Color3.fromRGB(29, 29, 37)
-    end
+local function button(parent, text, pos, size)
+    local b = Instance.new("TextButton")
+    b.Position = pos
+    b.Size = size
+    b.BackgroundColor3 = PANEL3
+    b.BorderSizePixel = 0
+    b.Text = text
+    b.TextColor3 = WHITE
+    b.TextSize = 12
+    b.Font = Enum.Font.GothamMedium
+    b.AutoButtonColor = false
+    b.Parent = parent
+    local c = Instance.new("UICorner")
+    c.CornerRadius = UDim.new(0, 8)
+    c.Parent = b
+    return b
 end
 
-ESPToggle.MouseButton1Click:Connect(function()
+local Min = button(Top, "—", UDim2.new(1, -90, 0, 13), UDim2.fromOffset(34, 32))
+local Close = button(Top, "×", UDim2.new(1, -48, 0, 13), UDim2.fromOffset(34, 32))
+Close.BackgroundColor3 = RED_DARK
 
-    ESP_ENABLED = not ESP_ENABLED
+local Side = Instance.new("Frame")
+Side.Position = UDim2.fromOffset(0, 58)
+Side.Size = UDim2.new(0, 145, 1, -58)
+Side.BackgroundColor3 = Color3.fromRGB(20, 21, 27)
+Side.BorderSizePixel = 0
+Side.Parent = Main
 
-    if not ESP_ENABLED then
+local ESPTab = button(Side, "◈   ESP", UDim2.fromOffset(10, 16), UDim2.fromOffset(125, 44))
+local LockTab = button(Side, "◎   LOCK", UDim2.fromOffset(10, 68), UDim2.fromOffset(125, 44))
 
-        removeAllESP()
+local status = Instance.new("TextLabel")
+status.BackgroundTransparency = 1
+status.Position = UDim2.fromOffset(12, 430)
+status.Size = UDim2.fromOffset(120, 35)
+status.Text = "Q  LOCK\nRightShift  MENU"
+status.TextColor3 = MUTED
+status.TextSize = 10
+status.Font = Enum.Font.GothamMedium
+status.TextXAlignment = Enum.TextXAlignment.Left
+status.Parent = Side
 
-    else
+local ESPPage = Instance.new("Frame")
+ESPPage.Position = UDim2.fromOffset(145, 58)
+ESPPage.Size = UDim2.new(1, -145, 1, -58)
+ESPPage.BackgroundTransparency = 1
+ESPPage.Parent = Main
 
-        for _, player in ipairs(Players:GetPlayers()) do
-            if player ~= LocalPlayer then
-                updatePlayerESP(player)
-            end
-        end
+local LockPage = Instance.new("ScrollingFrame")
+LockPage.Position = UDim2.fromOffset(145, 58)
+LockPage.Size = UDim2.new(1, -145, 1, -58)
+LockPage.BackgroundTransparency = 1
+LockPage.BorderSizePixel = 0
+LockPage.ScrollBarThickness = 4
+LockPage.ScrollBarImageColor3 = RED
+LockPage.CanvasSize = UDim2.new(0, 0, 0, 610)
+LockPage.Visible = false
+LockPage.Parent = Main
 
-        scanBots()
-    end
-
-    refreshESPToggle()
-end)
-
-refreshESPToggle()
-
---==================================================
--- BOT TOGGLE
---==================================================
-
-local BotToggle = Instance.new("TextButton")
-
-BotToggle.Position = UDim2.new(0, 18, 0, 98)
-BotToggle.Size = UDim2.new(1, -36, 0, 40)
-BotToggle.BackgroundColor3 = Color3.fromRGB(29, 29, 37)
-BotToggle.TextColor3 = Color3.fromRGB(235, 235, 240)
-BotToggle.TextSize = 13
-BotToggle.Font = Enum.Font.GothamMedium
-BotToggle.TextXAlignment = Enum.TextXAlignment.Left
-BotToggle.BorderSizePixel = 0
-BotToggle.ZIndex = 12
-BotToggle.Parent = ESPContent
-
-local BotCorner = Instance.new("UICorner")
-BotCorner.CornerRadius = UDim.new(0, 7)
-BotCorner.Parent = BotToggle
-
-local function refreshBotToggle()
-
-    BotToggle.Text =
-        "   BOTS     ["
-        .. (BOTS_ENABLED and "ON" or "OFF")
-        .. "]"
-
-    if BOTS_ENABLED then
-        BotToggle.BackgroundColor3 =
-            Color3.fromRGB(70, 52, 28)
-    else
-        BotToggle.BackgroundColor3 =
-            Color3.fromRGB(29, 29, 37)
-    end
+local function heading(parent, text, y)
+    local l = Instance.new("TextLabel")
+    l.BackgroundTransparency = 1
+    l.Position = UDim2.fromOffset(22, y)
+    l.Size = UDim2.new(1, -44, 0, 30)
+    l.Text = text
+    l.TextColor3 = WHITE
+    l.TextSize = 16
+    l.Font = Enum.Font.GothamBold
+    l.TextXAlignment = Enum.TextXAlignment.Left
+    l.Parent = parent
+    return l
 end
 
-BotToggle.MouseButton1Click:Connect(function()
+heading(ESPPage, "ESP SETTINGS", 18)
+heading(LockPage, "PLAYER LOCK", 18)
 
-    BOTS_ENABLED = not BOTS_ENABLED
-
-    if not BOTS_ENABLED then
-
-        for character, data in pairs(activeESP) do
-
-            if data.kind == "BOT" then
-                removeESP(character)
-            end
-
-        end
+local function toggleButton(parent, text, y, getter, setter)
+    local b = button(parent, "", UDim2.fromOffset(22, y), UDim2.new(1, -44, 0, 40))
+    local function refresh()
+        local on = getter()
+        b.Text = "   " .. text .. "                         " .. (on and "ON" or "OFF")
+        b.BackgroundColor3 = on and RED_SOFT or PANEL3
+        b.TextColor3 = on and WHITE or MUTED
     end
+    b.MouseButton1Click:Connect(function()
+        setter(not getter())
+        refresh()
+    end)
+    refresh()
+    return b, refresh
+end
 
-    refreshBotToggle()
-end)
-
-refreshBotToggle()
-
---==================================================
--- PLAYER LIST
---==================================================
-
-local PlayerTitle = Instance.new("TextLabel")
-
-PlayerTitle.BackgroundTransparency = 1
-PlayerTitle.Position = UDim2.new(0, 18, 0, 150)
-PlayerTitle.Size = UDim2.new(1, -36, 0, 25)
-PlayerTitle.Text = "PLAYERS"
-PlayerTitle.TextColor3 = Color3.fromRGB(180, 180, 190)
-PlayerTitle.TextSize = 12
-PlayerTitle.Font = Enum.Font.GothamBold
-PlayerTitle.TextXAlignment = Enum.TextXAlignment.Left
-PlayerTitle.ZIndex = 12
-PlayerTitle.Parent = ESPContent
-
-local PlayerList = Instance.new("ScrollingFrame")
-
-PlayerList.Position = UDim2.new(0, 18, 0, 178)
-PlayerList.Size = UDim2.new(1, -36, 0, 205)
-PlayerList.BackgroundColor3 = Color3.fromRGB(22, 22, 29)
-PlayerList.BorderSizePixel = 0
-PlayerList.ScrollBarThickness = 4
-PlayerList.ScrollBarImageColor3 = Color3.fromRGB(70, 70, 85)
-PlayerList.CanvasSize = UDim2.new(0, 0, 0, 0)
-PlayerList.ZIndex = 12
-PlayerList.Parent = ESPContent
-
-local ListCorner = Instance.new("UICorner")
-ListCorner.CornerRadius = UDim.new(0, 7)
-ListCorner.Parent = PlayerList
-
-local PlayerLayout = Instance.new("UIListLayout")
-
-PlayerLayout.Padding = UDim.new(0, 5)
-PlayerLayout.SortOrder = Enum.SortOrder.Name
-PlayerLayout.Parent = PlayerList
-
-local PlayerPadding = Instance.new("UIPadding")
-
-PlayerPadding.PaddingTop = UDim.new(0, 6)
-PlayerPadding.PaddingBottom = UDim.new(0, 6)
-PlayerPadding.PaddingLeft = UDim.new(0, 6)
-PlayerPadding.PaddingRight = UDim.new(0, 6)
-PlayerPadding.Parent = PlayerList
-
-local function refreshPlayerList()
-
-    for _, child in ipairs(PlayerList:GetChildren()) do
-
-        if child:IsA("TextButton") then
-            child:Destroy()
+local espToggle, refreshESP = toggleButton(ESPPage, "MASTER ESP", 55,
+    function() return ESP_ENABLED end,
+    function(v)
+        ESP_ENABLED = v
+        if not v then removeAllESP() else
+            for _, p in ipairs(Players:GetPlayers()) do updatePlayerESP(p) end
+            scanBots()
         end
-
-    end
-
-    local players = Players:GetPlayers()
-
-    table.sort(players, function(a, b)
-        return a.Name:lower() < b.Name:lower()
     end)
 
-    for _, player in ipairs(players) do
-
-        if player ~= LocalPlayer then
-
-            if selectedPlayers[player.UserId] == nil then
-                selectedPlayers[player.UserId] = false
+local botToggle, refreshBots = toggleButton(ESPPage, "BOT ESP", 102,
+    function() return BOTS_ENABLED end,
+    function(v)
+        BOTS_ENABLED = v
+        if not v then
+            for c, d in pairs(activeESP) do
+                if d.kind == "BOT" then destroyOldESP(c) end
             end
+        else scanBots() end
+    end)
 
-            local button = Instance.new("TextButton")
+local allBtn = button(ESPPage, "   SELECT ALL PLAYERS", UDim2.fromOffset(22, 149), UDim2.new(.48, -28, 0, 40))
+allBtn.BackgroundColor3 = RED_DARK
+local clearBtn = button(ESPPage, "   CLEAR ALL", UDim2.new(.52, 0, 0, 149), UDim2.new(.48, -28, 0, 40))
+allBtn.Parent = ESPPage
+clearBtn.Parent = ESPPage
 
-            button.Size = UDim2.new(1, -4, 0, 32)
+local selectedLabel = Instance.new("TextLabel")
+selectedLabel.BackgroundTransparency = 1
+selectedLabel.Position = UDim2.fromOffset(22, 198)
+selectedLabel.Size = UDim2.new(1, -44, 0, 24)
+selectedLabel.Text = "PLAYER SELECTION"
+selectedLabel.TextColor3 = MUTED
+selectedLabel.TextSize = 11
+selectedLabel.Font = Enum.Font.GothamBold
+selectedLabel.TextXAlignment = Enum.TextXAlignment.Left
+selectedLabel.Parent = ESPPage
 
-            button.BackgroundColor3 =
-                selectedPlayers[player.UserId]
-                and Color3.fromRGB(30, 65, 50)
-                or Color3.fromRGB(32, 32, 40)
+local PlayerList = Instance.new("ScrollingFrame")
+PlayerList.Position = UDim2.fromOffset(22, 226)
+PlayerList.Size = UDim2.new(1, -44, 0, 190)
+PlayerList.BackgroundColor3 = Color3.fromRGB(13, 14, 18)
+PlayerList.BorderSizePixel = 0
+PlayerList.ScrollBarThickness = 4
+PlayerList.ScrollBarImageColor3 = RED
+PlayerList.Parent = ESPPage
 
-            button.Text =
-                "  "
-                .. player.DisplayName
-                .. "  ["
-                .. (
-                    selectedPlayers[player.UserId]
-                    and "ON"
-                    or "OFF"
-                )
-                .. "]"
+local listCorner = Instance.new("UICorner")
+listCorner.CornerRadius = UDim.new(0, 9)
+listCorner.Parent = PlayerList
 
-            button.TextColor3 =
-                Color3.fromRGB(230, 230, 235)
+local listLayout = Instance.new("UIListLayout")
+listLayout.Padding = UDim.new(0, 5)
+listLayout.SortOrder = Enum.SortOrder.Name
+listLayout.Parent = PlayerList
 
-            button.TextSize = 12
-            button.Font = Enum.Font.GothamMedium
-            button.TextXAlignment =
-                Enum.TextXAlignment.Left
+local listPad = Instance.new("UIPadding")
+listPad.PaddingTop = UDim.new(0, 7)
+listPad.PaddingBottom = UDim.new(0, 7)
+listPad.PaddingLeft = UDim.new(0, 7)
+listPad.PaddingRight = UDim.new(0, 7)
+listPad.Parent = PlayerList
 
-            button.BorderSizePixel = 0
-            button.ZIndex = 13
-            button.Parent = PlayerList
+local function refreshPlayerList()
+    for _, c in ipairs(PlayerList:GetChildren()) do
+        if c:IsA("TextButton") then c:Destroy() end
+    end
 
-            local corner = Instance.new("UICorner")
+    local list = {}
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p ~= LocalPlayer then table.insert(list, p) end
+    end
+    table.sort(list, function(a,b) return a.Name:lower() < b.Name:lower() end)
 
-            corner.CornerRadius = UDim.new(0, 5)
-            corner.Parent = button
+    for _, p in ipairs(list) do
+        if selectedPlayers[p.UserId] == nil then selectedPlayers[p.UserId] = false end
+        local b = button(PlayerList,
+            "  " .. p.DisplayName .. "  [" .. p.Name .. "]     " ..
+            (selectedPlayers[p.UserId] and "ESP ON" or "ESP OFF"),
+            UDim2.new(), UDim2.new(1, 0, 0, 32))
+        b.BackgroundColor3 = selectedPlayers[p.UserId] and RED_SOFT or PANEL3
+        b.TextColor3 = selectedPlayers[p.UserId] and RED or WHITE
+        b.Parent = PlayerList
 
-            button.MouseButton1Click:Connect(function()
-
-                selectedPlayers[player.UserId] =
-                    not selectedPlayers[player.UserId]
-
-                updatePlayerESP(player)
-
-                refreshPlayerList()
-            end)
-        end
+        b.MouseButton1Click:Connect(function()
+            selectedPlayers[p.UserId] = not selectedPlayers[p.UserId]
+            updatePlayerESP(p)
+            if not selectedPlayers[p.UserId] and lockedPlayer == p then
+                lockActive = false
+            end
+            refreshPlayerList()
+        end)
     end
 
     task.defer(function()
-
-        PlayerList.CanvasSize =
-            UDim2.new(
-                0,
-                0,
-                0,
-                PlayerLayout.AbsoluteContentSize.Y + 12
-            )
+        PlayerList.CanvasSize = UDim2.fromOffset(0, listLayout.AbsoluteContentSize.Y + 14)
     end)
 end
+
+allBtn.MouseButton1Click:Connect(function()
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p ~= LocalPlayer then
+            selectedPlayers[p.UserId] = true
+            updatePlayerESP(p)
+        end
+    end
+    refreshPlayerList()
+end)
+
+clearBtn.MouseButton1Click:Connect(function()
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p ~= LocalPlayer then
+            selectedPlayers[p.UserId] = false
+            updatePlayerESP(p)
+        end
+    end
+    lockedPlayer = nil
+    lockActive = false
+    refreshPlayerList()
+end)
 
 refreshPlayerList()
 
 --==================================================
--- AIM TITLE
+-- LOCK CONTROLS
 --==================================================
 
-local AIMTitle = Instance.new("TextLabel")
+local lockToggle, refreshLock = toggleButton(LockPage, "MASTER LOCK", 55,
+    function() return LOCK_ENABLED end,
+    function(v)
+        LOCK_ENABLED = v
+        if not v then lockActive = false end
+    end)
 
-AIMTitle.BackgroundTransparency = 1
-AIMTitle.Position = UDim2.new(0, 18, 0, 15)
-AIMTitle.Size = UDim2.new(1, -36, 0, 28)
-AIMTitle.Text = "AIM SETTINGS"
-AIMTitle.TextColor3 = Color3.fromRGB(240, 240, 245)
-AIMTitle.TextSize = 15
-AIMTitle.Font = Enum.Font.GothamBold
-AIMTitle.TextXAlignment = Enum.TextXAlignment.Left
-AIMTitle.ZIndex = 12
-AIMTitle.Parent = AIMContent
+local function slider(parent, y, titleText, minV, maxV, initial, callback)
+    local holder = Instance.new("Frame")
+    holder.Position = UDim2.fromOffset(22, y)
+    holder.Size = UDim2.new(1, -44, 0, 66)
+    holder.BackgroundTransparency = 1
+    holder.Parent = parent
 
---==================================================
--- AIM TOGGLE
---==================================================
-
-local AIMToggle = Instance.new("TextButton")
-
-AIMToggle.Position = UDim2.new(0, 18, 0, 50)
-AIMToggle.Size = UDim2.new(1, -36, 0, 40)
-AIMToggle.BackgroundColor3 = Color3.fromRGB(29, 29, 37)
-AIMToggle.TextColor3 = Color3.fromRGB(235, 235, 240)
-AIMToggle.TextSize = 13
-AIMToggle.Font = Enum.Font.GothamMedium
-AIMToggle.TextXAlignment = Enum.TextXAlignment.Left
-AIMToggle.BorderSizePixel = 0
-AIMToggle.ZIndex = 12
-AIMToggle.Parent = AIMContent
-
-local AIMToggleCorner = Instance.new("UICorner")
-AIMToggleCorner.CornerRadius = UDim.new(0, 7)
-AIMToggleCorner.Parent = AIMToggle
-
-local function refreshAIMToggle()
-
-    AIMToggle.Text =
-        "   AIM     ["
-        .. (AIM_ENABLED and "ON" or "OFF")
-        .. "]"
-
-    if AIM_ENABLED then
-
-        AIMToggle.BackgroundColor3 =
-            Color3.fromRGB(25, 65, 75)
-
-    else
-
-        AIMToggle.BackgroundColor3 =
-            Color3.fromRGB(29, 29, 37)
-    end
-end
-
-AIMToggle.MouseButton1Click:Connect(function()
-
-    AIM_ENABLED = not AIM_ENABLED
-
-    if not AIM_ENABLED then
-        aimHolding = false
-        aimToggled = false
-    end
-
-    refreshAIMToggle()
-end)
-
-refreshAIMToggle()
-
---==================================================
--- SLIDER
---==================================================
-
-local function createSlider(
-    parent,
-    y,
-    title,
-    minValue,
-    maxValue,
-    initialValue,
-    callback
-)
-
-    local container = Instance.new("Frame")
-
-    container.Position =
-        UDim2.new(0, 18, 0, y)
-
-    container.Size =
-        UDim2.new(1, -36, 0, 62)
-
-    container.BackgroundTransparency = 1
-    container.ZIndex = 12
-    container.Parent = parent
-
-    local label = Instance.new("TextLabel")
-
-    label.BackgroundTransparency = 1
-    label.Position = UDim2.new(0, 0, 0, 0)
-    label.Size = UDim2.new(1, 0, 0, 22)
-    label.TextColor3 = Color3.fromRGB(220, 220, 230)
-    label.TextSize = 12
-    label.Font = Enum.Font.GothamMedium
-    label.TextXAlignment = Enum.TextXAlignment.Left
-    label.ZIndex = 13
-    label.Parent = container
+    local lab = Instance.new("TextLabel")
+    lab.BackgroundTransparency = 1
+    lab.Size = UDim2.new(1, 0, 0, 24)
+    lab.TextColor3 = WHITE
+    lab.TextSize = 12
+    lab.Font = Enum.Font.GothamMedium
+    lab.TextXAlignment = Enum.TextXAlignment.Left
+    lab.Parent = holder
 
     local bar = Instance.new("Frame")
-
-    bar.Position = UDim2.new(0, 0, 0, 32)
+    bar.Position = UDim2.fromOffset(0, 34)
     bar.Size = UDim2.new(1, 0, 0, 7)
-    bar.BackgroundColor3 = Color3.fromRGB(45, 45, 55)
+    bar.BackgroundColor3 = PANEL3
     bar.BorderSizePixel = 0
-    bar.ZIndex = 13
-    bar.Parent = container
-
-    local barCorner = Instance.new("UICorner")
-
-    barCorner.CornerRadius = UDim.new(1, 0)
-    barCorner.Parent = bar
+    bar.Parent = holder
+    local bc = Instance.new("UICorner"); bc.CornerRadius = UDim.new(1,0); bc.Parent = bar
 
     local fill = Instance.new("Frame")
-
-    fill.Size = UDim2.new(0, 0, 1, 0)
-    fill.BackgroundColor3 = AIM_COLOR
+    fill.BackgroundColor3 = RED
     fill.BorderSizePixel = 0
-    fill.ZIndex = 14
     fill.Parent = bar
-
-    local fillCorner = Instance.new("UICorner")
-
-    fillCorner.CornerRadius = UDim.new(1, 0)
-    fillCorner.Parent = fill
+    local fc = Instance.new("UICorner"); fc.CornerRadius = UDim.new(1,0); fc.Parent = fill
 
     local dragging = false
-
-    local function setValue(newValue)
-
-        local value =
-            math.clamp(
-                newValue,
-                minValue,
-                maxValue
-            )
-
-        local percent =
-            (value - minValue)
-            / (maxValue - minValue)
-
-        fill.Size =
-            UDim2.new(
-                percent,
-                0,
-                1,
-                0
-            )
-
-        label.Text =
-            title
-            .. ": "
-            .. tostring(math.floor(value))
-
-        callback(value)
+    local function set(v)
+        v = math.clamp(v, minV, maxV)
+        local pct = (v-minV)/(maxV-minV)
+        fill.Size = UDim2.new(pct,0,1,0)
+        lab.Text = titleText .. "   " .. math.floor(v)
+        callback(v)
     end
-
-    local function updateFromMouse(x)
-
-        if bar.AbsoluteSize.X <= 0 then
-            return
-        end
-
-        local relative =
-            math.clamp(
-                x - bar.AbsolutePosition.X,
-                0,
-                bar.AbsoluteSize.X
-            )
-
-        local percent =
-            relative / bar.AbsoluteSize.X
-
-        setValue(
-            minValue
-            + (
-                (maxValue - minValue)
-                * percent
-            )
-        )
+    local function mouse(x)
+        local pct = math.clamp((x-bar.AbsolutePosition.X)/bar.AbsoluteSize.X,0,1)
+        set(minV+(maxV-minV)*pct)
     end
-
-    bar.InputBegan:Connect(function(input)
-
-        if input.UserInputType
-            == Enum.UserInputType.MouseButton1
-        then
-
-            dragging = true
-
-            updateFromMouse(
-                input.Position.X
-            )
+    bar.InputBegan:Connect(function(i)
+        if i.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging=true; mouse(i.Position.X)
         end
     end)
-
-    UserInputService.InputChanged:Connect(function(input)
-
-        if dragging
-            and input.UserInputType
-                == Enum.UserInputType.MouseMovement
-        then
-
-            updateFromMouse(
-                input.Position.X
-            )
-        end
+    UserInputService.InputChanged:Connect(function(i)
+        if dragging and i.UserInputType == Enum.UserInputType.MouseMovement then mouse(i.Position.X) end
     end)
-
-    UserInputService.InputEnded:Connect(function(input)
-
-        if input.UserInputType
-            == Enum.UserInputType.MouseButton1
-        then
-
-            dragging = false
-        end
+    UserInputService.InputEnded:Connect(function(i)
+        if i.UserInputType == Enum.UserInputType.MouseButton1 then dragging=false end
     end)
-
-    setValue(initialValue)
-
-    return container
+    set(initial)
 end
 
---==================================================
--- AIM SLIDERS
---==================================================
+slider(LockPage, 102, "FOV", 20, 500, LOCK_FOV, function(v) LOCK_FOV=v end)
+slider(LockPage, 170, "LOCK STRENGTH", 1, 30, LOCK_STRENGTH, function(v) LOCK_STRENGTH=v end)
+slider(LockPage, 238, "MAX DISTANCE", 50, 2000, LOCK_MAX_DISTANCE, function(v) LOCK_MAX_DISTANCE=v end)
 
-createSlider(
-    AIMContent,
-    100,
-    "FOV",
-    20,
-    500,
-    AIM_FOV,
-    function(value)
-        AIM_FOV = value
-    end
-)
-
-createSlider(
-    AIMContent,
-    165,
-    "Max Distance",
-    50,
-    2000,
-    AIM_MAX_DISTANCE,
-    function(value)
-        AIM_MAX_DISTANCE = value
-    end
-)
-
-createSlider(
-    AIMContent,
-    230,
-    "Smoothness",
-    1,
-    30,
-    AIM_SMOOTHNESS,
-    function(value)
-        AIM_SMOOTHNESS = value
-    end
-)
-
---==================================================
--- AIM OPTIONS
---==================================================
-
-local function createOptionButton(
-    y,
-    title,
-    getValue,
-    setValue
-)
-
-    local button = Instance.new("TextButton")
-
-    button.Position =
-        UDim2.new(0, 18, 0, y)
-
-    button.Size =
-        UDim2.new(1, -36, 0, 38)
-
-    button.BackgroundColor3 =
-        Color3.fromRGB(29, 29, 37)
-
-    button.TextColor3 =
-        Color3.fromRGB(230, 230, 235)
-
-    button.TextSize = 12
-    button.Font = Enum.Font.GothamMedium
-    button.TextXAlignment =
-        Enum.TextXAlignment.Left
-
-    button.BorderSizePixel = 0
-    button.ZIndex = 12
-    button.Parent = AIMContent
-
-    local corner = Instance.new("UICorner")
-
-    corner.CornerRadius = UDim.new(0, 7)
-    corner.Parent = button
-
+local function option(parent, y, titleText, get, set)
+    local b = button(parent, "", UDim2.fromOffset(22,y), UDim2.new(1,-44,0,40))
     local function refresh()
-
-        button.Text =
-            "   "
-            .. title
-            .. ": "
-            .. tostring(getValue())
+        b.Text = "   " .. titleText .. "                         " .. tostring(get())
+        b.BackgroundColor3 = PANEL3
     end
-
-    button.MouseButton1Click:Connect(function()
-
-        setValue()
-
-        refresh()
-    end)
-
+    b.MouseButton1Click:Connect(function() set(); refresh() end)
     refresh()
-
-    return button
+    return b
 end
 
-createOptionButton(
-    295,
-    "Target Part",
+option(LockPage, 306, "TARGET PART", function() return LOCK_TARGET_PART end, function()
+    LOCK_TARGET_PART = LOCK_TARGET_PART == "Head" and "HumanoidRootPart" or "Head"
+end)
 
-    function()
-        return AIM_TARGET_PART
-    end,
+option(LockPage, 353, "VISIBLE CHECK", function() return LOCK_VISIBLE_CHECK and "ON" or "OFF" end, function()
+    LOCK_VISIBLE_CHECK = not LOCK_VISIBLE_CHECK
+end)
 
-    function()
+option(LockPage, 400, "TEAM CHECK", function() return LOCK_TEAM_CHECK and "ON" or "OFF" end, function()
+    LOCK_TEAM_CHECK = not LOCK_TEAM_CHECK
+end)
 
-        if AIM_TARGET_PART == "Head" then
-            AIM_TARGET_PART = "HumanoidRootPart"
-        else
-            AIM_TARGET_PART = "Head"
-        end
-    end
-)
-
-createOptionButton(
-    340,
-    "Visible Check",
-
-    function()
-        return AIM_VISIBLE_CHECK
-            and "ON"
-            or "OFF"
-    end,
-
-    function()
-        AIM_VISIBLE_CHECK =
-            not AIM_VISIBLE_CHECK
-    end
-)
-
-createOptionButton(
-    385,
-    "Team Check",
-
-    function()
-        return AIM_TEAM_CHECK
-            and "ON"
-            or "OFF"
-    end,
-
-    function()
-        AIM_TEAM_CHECK =
-            not AIM_TEAM_CHECK
-    end
-)
-
-createOptionButton(
-    430,
-    "Selected Only",
-
-    function()
-        return AIM_SELECTED_ONLY
-            and "ON"
-            or "OFF"
-    end,
-
-    function()
-        AIM_SELECTED_ONLY =
-            not AIM_SELECTED_ONLY
-    end
-)
-
-createOptionButton(
-    475,
-    "Activation",
-
-    function()
-
-        return AIM_HOLD_MODE
-            and "HOLD Q"
-            or "TOGGLE Q"
-    end,
-
-    function()
-
-        AIM_HOLD_MODE =
-            not AIM_HOLD_MODE
-
-        aimHolding = false
-        aimToggled = false
-    end
-)
-
---==================================================
--- AIM KEY
---==================================================
-
-local KeyButton = Instance.new("TextButton")
-
-KeyButton.Position =
-    UDim2.new(0, 18, 0, 520)
-
-KeyButton.Size =
-    UDim2.new(1, -36, 0, 38)
-
-KeyButton.BackgroundColor3 =
-    Color3.fromRGB(29, 29, 37)
-
-KeyButton.TextColor3 =
-    Color3.fromRGB(230, 230, 235)
-
-KeyButton.TextSize = 12
-KeyButton.Font = Enum.Font.GothamMedium
-KeyButton.TextXAlignment =
-    Enum.TextXAlignment.Left
-
-KeyButton.BorderSizePixel = 0
-KeyButton.ZIndex = 12
-KeyButton.Parent = AIMContent
-
-local KeyCorner = Instance.new("UICorner")
-
-KeyCorner.CornerRadius = UDim.new(0, 7)
-KeyCorner.Parent = KeyButton
-
-local function getKeyName()
-
-    if AIM_KEY == Enum.KeyCode.Q then
-        return "Q"
-    end
-
-    if typeof(AIM_KEY) == "EnumItem" then
-        return AIM_KEY.Name
-    end
-
-    return "Unknown"
+local keyBtn = button(LockPage, "", UDim2.fromOffset(22, 447), UDim2.new(1,-44,0,40))
+local function keyName() return LOCK_KEY.Name end
+local function refreshKey()
+    keyBtn.Text = "   LOCK KEY                         " .. (waitingForKey and "PRESS A KEY..." or keyName())
 end
-
-local function refreshKeyButton()
-
-    if waitingForKey then
-
-        KeyButton.Text =
-            "   Aim Key: PRESS A KEY..."
-
-    else
-
-        KeyButton.Text =
-            "   Aim Key: "
-            .. getKeyName()
-    end
-end
-
-KeyButton.MouseButton1Click:Connect(function()
-
-    waitingForKey = true
-
-    refreshKeyButton()
+keyBtn.MouseButton1Click:Connect(function()
+    waitingForKey=true
+    refreshKey()
 end)
+refreshKey()
 
-refreshKeyButton()
+local targetLabel = Instance.new("TextLabel")
+targetLabel.BackgroundTransparency = 1
+targetLabel.Position = UDim2.fromOffset(22, 496)
+targetLabel.Size = UDim2.new(1,-44,0,25)
+targetLabel.Text = "LOCK TARGET  •  select a player in ESP tab"
+targetLabel.TextColor3 = MUTED
+targetLabel.TextSize = 11
+targetLabel.Font = Enum.Font.GothamMedium
+targetLabel.TextXAlignment = Enum.TextXAlignment.Left
+targetLabel.Parent = LockPage
 
 --==================================================
--- TAB SWITCH
---==================================================
-
-ESPTab.MouseButton1Click:Connect(function()
-
-    ESPContent.Visible = true
-    AIMContent.Visible = false
-
-    ESPTab.BackgroundColor3 =
-        Color3.fromRGB(40, 40, 52)
-
-    ESPTab.TextColor3 =
-        Color3.fromRGB(240, 240, 245)
-
-    AIMTab.BackgroundColor3 =
-        Color3.fromRGB(29, 29, 36)
-
-    AIMTab.TextColor3 =
-        Color3.fromRGB(180, 180, 190)
-end)
-
-AIMTab.MouseButton1Click:Connect(function()
-
-    ESPContent.Visible = false
-    AIMContent.Visible = true
-
-    AIMTab.BackgroundColor3 =
-        Color3.fromRGB(40, 40, 52)
-
-    AIMTab.TextColor3 =
-        Color3.fromRGB(240, 240, 245)
-
-    ESPTab.BackgroundColor3 =
-        Color3.fromRGB(29, 29, 36)
-
-    ESPTab.TextColor3 =
-        Color3.fromRGB(180, 180, 190)
-end)
-
---==================================================
--- FOV CIRCLE
+-- FOV
 --==================================================
 
 local FOVCircle = Instance.new("Frame")
-
-FOVCircle.Name = "AIM_FOV_Circle"
-FOVCircle.AnchorPoint =
-    Vector2.new(0.5, 0.5)
-
-FOVCircle.Size =
-    UDim2.new(
-        0,
-        AIM_FOV * 2,
-        0,
-        AIM_FOV * 2
-    )
-
+FOVCircle.Name = "LOCK_FOV"
+FOVCircle.AnchorPoint = Vector2.new(.5,.5)
 FOVCircle.BackgroundTransparency = 1
 FOVCircle.BorderSizePixel = 0
 FOVCircle.Visible = false
-FOVCircle.ZIndex = 5
 FOVCircle.Parent = ScreenGui
 
-local FOVCorner = Instance.new("UICorner")
+local fovCorner = Instance.new("UICorner")
+fovCorner.CornerRadius = UDim.new(1,0)
+fovCorner.Parent = FOVCircle
 
-FOVCorner.CornerRadius =
-    UDim.new(1, 0)
-
-FOVCorner.Parent = FOVCircle
-
-local FOVStroke = Instance.new("UIStroke")
-
-FOVStroke.Color = AIM_COLOR
-FOVStroke.Thickness = 1.5
-FOVStroke.Transparency = 0.15
-FOVStroke.Parent = FOVCircle
+local fovStroke = Instance.new("UIStroke")
+fovStroke.Color = RED
+fovStroke.Thickness = 2
+fovStroke.Transparency = .1
+fovStroke.Parent = FOVCircle
 
 --==================================================
--- RAYCAST
+-- LOCK LOGIC
 --==================================================
 
 local rayParams = RaycastParams.new()
+rayParams.FilterType = Enum.RaycastFilterType.Exclude
 
-rayParams.FilterType =
-    Enum.RaycastFilterType.Exclude
-
-local function isVisible(
-    targetCharacter,
-    targetPosition
-)
-
-    local camera =
-        workspace.CurrentCamera
-
-    if not camera then
-        return false
-    end
-
-    local localCharacter =
-        LocalPlayer.Character
+local function visible(character, pos)
+    if not LOCK_VISIBLE_CHECK then return true end
+    local cam = workspace.CurrentCamera
+    if not cam then return false end
 
     local filter = {}
+    if LocalPlayer.Character then table.insert(filter, LocalPlayer.Character) end
+    rayParams.FilterDescendantsInstances = filter
 
-    if localCharacter then
-        table.insert(
-            filter,
-            localCharacter
-        )
-    end
+    local result = workspace:Raycast(cam.CFrame.Position, pos-cam.CFrame.Position, rayParams)
+    return not result or result.Instance:IsDescendantOf(character)
+end
 
-    rayParams.FilterDescendantsInstances =
-        filter
+local function enemy(p)
+    if not LOCK_TEAM_CHECK then return true end
+    if not LocalPlayer.Team or not p.Team then return true end
+    return LocalPlayer.Team ~= p.Team
+end
 
-    local origin =
-        camera.CFrame.Position
+local function validLockTarget(p)
+    if not p or p == LocalPlayer then return false end
+    if not p.Character or not alive(p.Character) then return false end
+    if not enemy(p) then return false end
+    if not selectedPlayers[p.UserId] then return false end
 
-    local direction =
-        targetPosition - origin
+    local part = targetPartOf(p.Character)
+    local myRoot = rootOf(LocalPlayer.Character)
+    if not part or not myRoot then return false end
 
-    local result =
-        workspace:Raycast(
-            origin,
-            direction,
-            rayParams
-        )
+    local dist = (part.Position-myRoot.Position).Magnitude
+    if dist > LOCK_MAX_DISTANCE then return false end
 
-    if not result then
-        return true
-    end
+    local cam = workspace.CurrentCamera
+    if not cam then return false end
+    local point, onScreen = cam:WorldToViewportPoint(part.Position)
+    if not onScreen or point.Z <= 0 then return false end
 
-    return result.Instance
-        and result.Instance:IsDescendantOf(
-            targetCharacter
-        )
+    local center = Vector2.new(cam.ViewportSize.X/2, cam.ViewportSize.Y/2)
+    local d = (Vector2.new(point.X,point.Y)-center).Magnitude
+    if d > LOCK_FOV then return false end
+
+    if not visible(p.Character, part.Position) then return false end
+    return true, part
+end
+
+local function applyLock(part, dt)
+    local cam = workspace.CurrentCamera
+    if not cam or not part then return end
+    local desired = CFrame.lookAt(cam.CFrame.Position, part.Position)
+    local alpha = 1-math.exp(-LOCK_STRENGTH*dt)
+    alpha = math.clamp(alpha, .01, 1)
+    cam.CFrame = cam.CFrame:Lerp(desired, alpha)
 end
 
 --==================================================
--- TEAM CHECK
+-- TABS
 --==================================================
 
-local function isEnemy(player)
-
-    if not AIM_TEAM_CHECK then
-        return true
-    end
-
-    if not LocalPlayer.Team
-        or not player.Team
-    then
-        return true
-    end
-
-    return LocalPlayer.Team ~= player.Team
+local function showESP()
+    ESPPage.Visible = true
+    LockPage.Visible = false
+    ESPTab.BackgroundColor3 = RED_SOFT
+    ESPTab.TextColor3 = WHITE
+    LockTab.BackgroundColor3 = PANEL3
+    LockTab.TextColor3 = MUTED
 end
 
---==================================================
--- FIND AIM TARGET
---==================================================
-
-local function getBestTarget()
-
-    if not AIM_ENABLED then
-        return nil
-    end
-
-    local camera =
-        workspace.CurrentCamera
-
-    if not camera then
-        return nil
-    end
-
-    local viewport =
-        camera.ViewportSize
-
-    local screenCenter =
-        Vector2.new(
-            viewport.X / 2,
-            viewport.Y / 2
-        )
-
-    local bestPlayer = nil
-    local bestPart = nil
-
-    local bestScreenDistance =
-        AIM_FOV + 1
-
-    local bestWorldDistance =
-        math.huge
-
-    local localCharacter =
-        LocalPlayer.Character
-
-    local localRoot =
-        getRoot(localCharacter)
-
-    if not localRoot then
-        return nil
-    end
-
-    for _, player in ipairs(
-        Players:GetPlayers()
-    ) do
-
-        if player ~= LocalPlayer then
-
-            local character =
-                player.Character
-
-            if character
-                and isAlive(character)
-                and isEnemy(player)
-            then
-
-                if not AIM_SELECTED_ONLY
-                    or selectedPlayers[player.UserId]
-                then
-
-                    local targetPart =
-                        getTargetPart(character)
-
-                    if targetPart then
-
-                        local worldDistance =
-                            (
-                                targetPart.Position
-                                - localRoot.Position
-                            ).Magnitude
-
-                        if worldDistance
-                            <= AIM_MAX_DISTANCE
-                        then
-
-                            local screenPoint,
-                                onScreen =
-                                camera:WorldToViewportPoint(
-                                    targetPart.Position
-                                )
-
-                            if onScreen
-                                and screenPoint.Z > 0
-                            then
-
-                                local screenPosition =
-                                    Vector2.new(
-                                        screenPoint.X,
-                                        screenPoint.Y
-                                    )
-
-                                local screenDistance =
-                                    (
-                                        screenPosition
-                                        - screenCenter
-                                    ).Magnitude
-
-                                if screenDistance
-                                    <= AIM_FOV
-                                then
-
-                                    local visible =
-                                        true
-
-                                    if AIM_VISIBLE_CHECK then
-
-                                        visible =
-                                            isVisible(
-                                                character,
-                                                targetPart.Position
-                                            )
-                                    end
-
-                                    if visible then
-
-                                        if
-                                            screenDistance
-                                            < bestScreenDistance
-                                            or (
-                                                math.abs(
-                                                    screenDistance
-                                                    - bestScreenDistance
-                                                ) < 1
-                                                and worldDistance
-                                                < bestWorldDistance
-                                            )
-                                        then
-
-                                            bestScreenDistance =
-                                                screenDistance
-
-                                            bestWorldDistance =
-                                                worldDistance
-
-                                            bestPlayer =
-                                                player
-
-                                            bestPart =
-                                                targetPart
-                                        end
-                                    end
-                                end
-                            end
-                        end
-                    end
-                end
-            end
-        end
-    end
-
-    return bestPlayer, bestPart
+local function showLock()
+    ESPPage.Visible = false
+    LockPage.Visible = true
+    LockTab.BackgroundColor3 = RED_SOFT
+    LockTab.TextColor3 = WHITE
+    ESPTab.BackgroundColor3 = PANEL3
+    ESPTab.TextColor3 = MUTED
 end
 
---==================================================
--- AIM
---==================================================
-
-local function aimAt(
-    targetPart,
-    deltaTime
-)
-
-    if not targetPart then
-        return
-    end
-
-    local camera =
-        workspace.CurrentCamera
-
-    if not camera then
-        return
-    end
-
-    local cameraPosition =
-        camera.CFrame.Position
-
-    local targetPosition =
-        targetPart.Position
-
-    local desiredCFrame =
-        CFrame.lookAt(
-            cameraPosition,
-            targetPosition
-        )
-
-    local smooth =
-        1 - math.exp(
-            -AIM_SMOOTHNESS
-            * deltaTime
-        )
-
-    smooth =
-        math.clamp(
-            smooth,
-            0.01,
-            1
-        )
-
-    camera.CFrame =
-        camera.CFrame:Lerp(
-            desiredCFrame,
-            smooth
-        )
-end
+ESPTab.MouseButton1Click:Connect(showESP)
+LockTab.MouseButton1Click:Connect(showLock)
+showESP()
 
 --==================================================
--- DRAG MENU
+-- DRAG
 --==================================================
 
-local dragging = false
-local dragStart
-local startPosition
-
-TopBar.InputBegan:Connect(function(input)
-
-    if input.UserInputType
-        == Enum.UserInputType.MouseButton1
-    then
-
-        dragging = true
-
-        dragStart =
-            input.Position
-
-        startPosition =
-            Main.Position
+local dragging, dragStart, startPos = false, nil, nil
+Top.InputBegan:Connect(function(i)
+    if i.UserInputType == Enum.UserInputType.MouseButton1 then
+        dragging=true; dragStart=i.Position; startPos=Main.Position
     end
 end)
-
-UserInputService.InputChanged:Connect(function(input)
-
-    if dragging
-        and input.UserInputType
-            == Enum.UserInputType.MouseMovement
-    then
-
-        local delta =
-            input.Position - dragStart
-
-        Main.Position =
-            UDim2.new(
-                startPosition.X.Scale,
-                startPosition.X.Offset
-                    + delta.X,
-
-                startPosition.Y.Scale,
-                startPosition.Y.Offset
-                    + delta.Y
-            )
+UserInputService.InputChanged:Connect(function(i)
+    if dragging and i.UserInputType == Enum.UserInputType.MouseMovement then
+        local d=i.Position-dragStart
+        Main.Position=UDim2.new(startPos.X.Scale,startPos.X.Offset+d.X,startPos.Y.Scale,startPos.Y.Offset+d.Y)
     end
 end)
-
-UserInputService.InputEnded:Connect(function(input)
-
-    if input.UserInputType
-        == Enum.UserInputType.MouseButton1
-    then
-
-        dragging = false
-    end
+UserInputService.InputEnded:Connect(function(i)
+    if i.UserInputType==Enum.UserInputType.MouseButton1 then dragging=false end
 end)
 
 --==================================================
--- MINIMIZE
+-- MINIMIZE / CLOSE
 --==================================================
 
-local minimized = false
-
-Minimize.MouseButton1Click:Connect(function()
-
-    minimized =
-        not minimized
-
-    Sidebar.Visible =
-        not minimized
-
-    if minimized then
-
-        ESPContent.Visible = false
-        AIMContent.Visible = false
-
-        Main.Size =
-            UDim2.new(
-                0,
-                620,
-                0,
-                48
-            )
-
-        Minimize.Text = "+"
-
-    else
-
-        Main.Size =
-            UDim2.new(
-                0,
-                620,
-                0,
-                440
-            )
-
-        Minimize.Text = "—"
-
-        if AIMTab.BackgroundColor3
-            == Color3.fromRGB(
-                40,
-                40,
-                52
-            )
-        then
-
-            AIMContent.Visible = true
-            ESPContent.Visible = false
-
-        else
-
-            ESPContent.Visible = true
-            AIMContent.Visible = false
-        end
-    end
+local minimized=false
+Min.MouseButton1Click:Connect(function()
+    minimized=not minimized
+    Side.Visible=not minimized
+    ESPPage.Visible=not minimized and not LockPage.Visible
+    LockPage.Visible=not minimized and LockPage.Visible
+    Main.Size=minimized and UDim2.fromOffset(760,58) or UDim2.fromOffset(760,500)
+    Min.Text=minimized and "+" or "—"
 end)
-
---==================================================
--- CLOSE
---==================================================
-
-local running = true
 
 Close.MouseButton1Click:Connect(function()
-
-    running = false
-
-    AIM_ENABLED = false
-    aimHolding = false
-    aimToggled = false
-
+    running=false
+    lockActive=false
     removeAllESP()
-
-    UserInputService.MouseBehavior =
-        Enum.MouseBehavior.Default
-
-    UserInputService.MouseIconEnabled =
-        true
-
-    pcall(function()
-        RunService:UnbindFromRenderStep(
-            "FTAP_AIM"
-        )
-    end)
-
+    pcall(function() RunService:UnbindFromRenderStep("FTAP_LOCK") end)
+    UserInputService.MouseBehavior=Enum.MouseBehavior.Default
+    UserInputService.MouseIconEnabled=true
     ScreenGui:Destroy()
 end)
 
@@ -1784,335 +734,146 @@ end)
 -- INPUT
 --==================================================
 
-UserInputService.InputBegan:Connect(
-    function(input, gameProcessed)
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if not running then return end
 
-        if not running then
+    if waitingForKey then
+        if input.UserInputType == Enum.UserInputType.Keyboard
+            and input.KeyCode ~= Enum.KeyCode.Unknown then
+            LOCK_KEY=input.KeyCode
+            waitingForKey=false
+            refreshKey()
             return
         end
+    end
 
-        -- KEY BIND SETTING
-        if waitingForKey then
+    if input.KeyCode == Enum.KeyCode.RightShift then
+        ScreenGui.Enabled=not ScreenGui.Enabled
+        UserInputService.MouseBehavior=Enum.MouseBehavior.Default
+        UserInputService.MouseIconEnabled=true
+        return
+    end
 
-            if input.UserInputType
-                == Enum.UserInputType.Keyboard
-            then
+    if input.KeyCode == Enum.KeyCode.U then
+        UserInputService.MouseBehavior=Enum.MouseBehavior.Default
+        UserInputService.MouseIconEnabled=true
+    end
 
-                if input.KeyCode
-                    ~= Enum.KeyCode.Unknown
-                then
+    if gameProcessed then return end
 
-                    AIM_KEY =
-                        input.KeyCode
-
-                    waitingForKey =
-                        false
-
-                    refreshKeyButton()
-
-                    return
+    if LOCK_ENABLED and input.KeyCode == LOCK_KEY then
+        if lockedPlayer and lockActive then
+            lockActive=false
+            lockedPlayer=nil
+        else
+            -- Lock only to the player explicitly selected in ESP.
+            local chosen=nil
+            for _,p in ipairs(Players:GetPlayers()) do
+                if p~=LocalPlayer and selectedPlayers[p.UserId] then
+                    if validLockTarget(p) then
+                        chosen=p
+                        break
+                    end
                 end
             end
-        end
-
-        -- U = UNLOCK MOUSE
-        if input.KeyCode
-            == Enum.KeyCode.U
-        then
-
-            UserInputService.MouseBehavior =
-                Enum.MouseBehavior.Default
-
-            UserInputService.MouseIconEnabled =
-                true
-        end
-
-        -- RIGHT SHIFT = MENU
-        if input.KeyCode
-            == Enum.KeyCode.RightShift
-        then
-
-            ScreenGui.Enabled =
-                not ScreenGui.Enabled
-
-            if ScreenGui.Enabled then
-
-                UserInputService.MouseBehavior =
-                    Enum.MouseBehavior.Default
-
-                UserInputService.MouseIconEnabled =
-                    true
-            end
-
-            return
-        end
-
-        if gameProcessed then
-            return
-        end
-
-        -- AIM
-        if AIM_ENABLED then
-
-            if input.KeyCode
-                == AIM_KEY
-            then
-
-                if AIM_HOLD_MODE then
-
-                    aimHolding = true
-
-                else
-
-                    aimToggled =
-                        not aimToggled
-                end
+            if chosen then
+                lockedPlayer=chosen
+                lockActive=true
             end
         end
     end
-)
-
-UserInputService.InputEnded:Connect(
-    function(input)
-
-        if not running then
-            return
-        end
-
-        if AIM_HOLD_MODE then
-
-            if input.KeyCode
-                == AIM_KEY
-            then
-
-                aimHolding = false
-            end
-        end
-    end
-)
+end)
 
 --==================================================
 -- PLAYER EVENTS
 --==================================================
 
-Players.PlayerAdded:Connect(
-    function(player)
+Players.PlayerAdded:Connect(function(p)
+    if p==LocalPlayer then return end
+    selectedPlayers[p.UserId]=false
+    p.CharacterAdded:Connect(function()
+        task.wait(.4)
+        updatePlayerESP(p)
+    end)
+    refreshPlayerList()
+end)
 
-        if player ~= LocalPlayer then
-
-            selectedPlayers[player.UserId] =
-                false
-
-            player.CharacterAdded:Connect(
-                function()
-
-                    task.wait(0.5)
-
-                    updatePlayerESP(
-                        player
-                    )
-                end
-            )
-
-            refreshPlayerList()
-        end
+Players.PlayerRemoving:Connect(function(p)
+    selectedPlayers[p.UserId]=nil
+    if lockedPlayer==p then
+        lockedPlayer=nil
+        lockActive=false
     end
-)
+    if p.Character then destroyOldESP(p.Character) end
+    refreshPlayerList()
+end)
 
-Players.PlayerRemoving:Connect(
-    function(player)
-
-        selectedPlayers[player.UserId] =
-            nil
-
-        if player.Character then
-            removeESP(
-                player.Character
-            )
-        end
-
-        refreshPlayerList()
-    end
-)
-
-for _, player in ipairs(
-    Players:GetPlayers()
-) do
-
-    if player ~= LocalPlayer then
-
-        player.CharacterAdded:Connect(
-            function()
-
-                task.wait(0.5)
-
-                updatePlayerESP(
-                    player
-                )
-            end
-        )
+for _,p in ipairs(Players:GetPlayers()) do
+    if p~=LocalPlayer then
+        p.CharacterAdded:Connect(function()
+            task.wait(.4)
+            updatePlayerESP(p)
+        end)
     end
 end
 
 --==================================================
--- RENDER LOOP
+-- RENDER
 --==================================================
 
-local botScanTimer = 0
+local botTimer=0
+RunService:BindToRenderStep("FTAP_LOCK", Enum.RenderPriority.Camera.Value+1, function(dt)
+    if not running then return end
 
-RunService:BindToRenderStep(
-    "FTAP_AIM",
-    Enum.RenderPriority.Camera.Value + 1,
+    local cam=workspace.CurrentCamera
+    if cam then
+        FOVCircle.Position=UDim2.fromOffset(cam.ViewportSize.X/2,cam.ViewportSize.Y/2)
+        FOVCircle.Size=UDim2.fromOffset(LOCK_FOV*2,LOCK_FOV*2)
+        FOVCircle.Visible=LOCK_ENABLED
+    end
 
-    function(deltaTime)
-
-        if not running then
-            return
-        end
-
-        local camera =
-            workspace.CurrentCamera
-
-        -- FOV CIRCLE
-        if camera then
-
-            local viewport =
-                camera.ViewportSize
-
-            FOVCircle.Position =
-                UDim2.new(
-                    0,
-                    viewport.X / 2,
-                    0,
-                    viewport.Y / 2
-                )
-
-            FOVCircle.Size =
-                UDim2.new(
-                    0,
-                    AIM_FOV * 2,
-                    0,
-                    AIM_FOV * 2
-                )
-
-            FOVCircle.Visible =
-                AIM_ENABLED
-        end
-
-        -- AIM
-        local activation
-
-        if AIM_HOLD_MODE then
-            activation = aimHolding
+    if LOCK_ENABLED and lockActive and lockedPlayer then
+        local ok,part=validLockTarget(lockedPlayer)
+        if ok and part then
+            applyLock(part,dt)
         else
-            activation = aimToggled
+            -- The lock stays assigned to the chosen player, but pauses
+            -- while the target is outside FOV, dead, too far away, or hidden.
         end
+    end
 
-        if AIM_ENABLED
-            and activation
-        then
-
-            local targetPlayer,
-                targetPart =
-                getBestTarget()
-
-            if targetPlayer
-                and targetPart
-            then
-
-                aimAt(
-                    targetPart,
-                    deltaTime
-                )
-            end
-        end
-
-        -- ESP
-        if ESP_ENABLED then
-
-            for _, player in ipairs(
-                Players:GetPlayers()
-            ) do
-
-                if player ~= LocalPlayer then
-
-                    local character =
-                        player.Character
-
-                    if character then
-
-                        local data =
-                            activeESP[character]
-
-                        if selectedPlayers[
-                            player.UserId
-                        ]
-                        then
-
-                            if not data
-                                or data.kind
-                                    ~= "PLAYER"
-                            then
-
-                                updatePlayerESP(
-                                    player
-                                )
-                            end
-
-                        else
-
-                            if data then
-                                removeESP(
-                                    character
-                                )
-                            end
-                        end
+    if ESP_ENABLED then
+        for _,p in ipairs(Players:GetPlayers()) do
+            if p~=LocalPlayer then
+                local c=p.Character
+                if c then
+                    local d=activeESP[c]
+                    if selectedPlayers[p.UserId] then
+                        if not d or d.kind~="PLAYER" then updatePlayerESP(p) end
+                    elseif d and d.kind=="PLAYER" then
+                        destroyOldESP(c)
                     end
                 end
             end
+        end
 
-            botScanTimer =
-                botScanTimer
-                + deltaTime
-
-            if botScanTimer >= 1 then
-
-                botScanTimer = 0
-
-                scanBots()
-            end
+        botTimer=botTimer+dt
+        if botTimer>=1 then
+            botTimer=0
+            scanBots()
         end
     end
-)
+end)
 
---==================================================
--- FINAL CLEANUP
---==================================================
-
-for _, obj in ipairs(
-    workspace:GetDescendants()
-) do
-
-    if obj:IsA("Highlight")
-        and obj.Name
-            == "FTAP_ESP_Highlight"
-    then
-
-        obj:Destroy()
-    end
-
-    if obj:IsA("BillboardGui")
-        and obj.Name
-            == "FTAP_ESP_Name"
-    then
-
+-- Clean old ESP objects from previous executions.
+for _,obj in ipairs(workspace:GetDescendants()) do
+    if (obj:IsA("Highlight") and obj.Name=="FTAP_ESP_Highlight")
+        or (obj:IsA("BillboardGui") and obj.Name=="FTAP_ESP_Name") then
         obj:Destroy()
     end
 end
 
-print("================================")
-print("FTAP Mod Menu loaded")
-print("AIM KEY: Q")
+print("FTAP Control Center loaded")
+print("LOCK KEY:", LOCK_KEY.Name)
 print("RightShift = Menu")
 print("U = Unlock Mouse")
-print("================================")
